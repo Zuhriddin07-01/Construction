@@ -83,7 +83,7 @@ A service maps to the `Product` model. An order can start without a builder. Eac
 Run these commands in PowerShell using Python 3.12 or newer.
 
 ```powershell
-git clone --branch portfolio/construction https://github.com/Zuhriddin07-01/Construction.git
+git clone https://github.com/Zuhriddin07-01/Construction.git
 cd Construction/Qurilish_project-main
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
