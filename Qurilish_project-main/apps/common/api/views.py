@@ -1,3 +1,4 @@
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from django.db.models import Avg, Count, Q
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
@@ -13,6 +14,8 @@ from .serializers import (
     WorkerDetailSerializer,
     WorkPhotoSerializer,
     ReviewSerializer,
+    ReviewInputSerializer,
+    WorkerReviewsSerializer,
 )
 
 User = get_user_model()
@@ -40,6 +43,12 @@ class WorkerListView(generics.ListAPIView):
     permission_classes = [permissions.AllowAny]
     serializer_class = WorkerListSerializer
 
+    @extend_schema(parameters=[
+        OpenApiParameter('search', str, description='Builder first or last name'),
+    ])
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+
     def get_queryset(self):
         workers = _annotate_workers(User.objects.filter(role='builder', is_active=True))
 
@@ -48,11 +57,7 @@ class WorkerListView(generics.ListAPIView):
             workers = workers.filter(first_name__icontains=search) | \
                       workers.filter(last_name__icontains=search)
 
-        address = self.request.query_params.get('address')
-        if address:
-            workers = workers.filter(address__icontains=address)
-
-        return workers
+        return workers.order_by('pk')
 
 
 class WorkerDetailView(generics.RetrieveAPIView):
@@ -62,10 +67,10 @@ class WorkerDetailView(generics.RetrieveAPIView):
     """
     permission_classes = [permissions.AllowAny]
     serializer_class = WorkerDetailSerializer
-    queryset = User.objects.filter(role='builder')
+    queryset = User.objects.filter(role='builder', is_active=True)
 
     def get_queryset(self):
-        return _annotate_workers(User.objects.filter(role='builder'))
+        return _annotate_workers(User.objects.filter(role='builder', is_active=True))
 
 
 class WorkPhotoUploadView(generics.CreateAPIView):
@@ -90,6 +95,7 @@ class WorkPhotoUploadView(generics.CreateAPIView):
 
 
 class WorkerPhotosView(generics.ListAPIView):
+    queryset = WorkPhoto.objects.none()
     """
     GET /api/common/workers/{id}/photos/
     Quruvchining barcha ish rasmlari
@@ -98,7 +104,9 @@ class WorkerPhotosView(generics.ListAPIView):
     serializer_class = WorkPhotoSerializer
 
     def get_queryset(self):
-        worker = get_object_or_404(User, pk=self.kwargs['pk'], role='builder')
+        if getattr(self, 'swagger_fake_view', False):
+            return self.queryset
+        worker = get_object_or_404(User, pk=self.kwargs['pk'], role='builder', is_active=True)
         return WorkPhoto.objects.filter(worker=worker)
 
 
@@ -110,8 +118,9 @@ class ReviewListCreateView(APIView):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     serializer_class = ReviewSerializer
 
+    @extend_schema(responses=WorkerReviewsSerializer)
     def get(self, request, pk):
-        worker = get_object_or_404(User, pk=pk, role='builder')
+        worker = get_object_or_404(User, pk=pk, role='builder', is_active=True)
         reviews = WorkerReview.objects.filter(worker=worker)
         return Response({
             'worker_id': worker.id,
@@ -119,38 +128,15 @@ class ReviewListCreateView(APIView):
             'reviews': ReviewSerializer(reviews, many=True).data,
         })
 
+    @extend_schema(request=ReviewInputSerializer, responses={201: ReviewSerializer})
     def post(self, request, pk):
-        worker = get_object_or_404(User, pk=pk, role='builder')
+        worker = get_object_or_404(User, pk=pk, role='builder', is_active=True)
 
-        order_id = request.data.get('order')
-        rating = request.data.get('rating')
-        comment = request.data.get('comment', '')
+        serializer = ReviewInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        order = get_object_or_404(Order, pk=data['order'], client=request.user)
 
-        if not order_id or not rating:
-            return Response(
-                {'error': "Buyurtma (order) va baho (rating) kiritish shart"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            rating = int(rating)
-        except (TypeError, ValueError):
-            return Response({'error': "Baho butun son bo'lishi kerak"}, status=status.HTTP_400_BAD_REQUEST)
-
-        if rating not in range(1, 6):
-            return Response(
-                {'error': "Baho 1 dan 5 gacha bo'lishi kerak"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        order = get_object_or_404(Order, pk=order_id)
-
-        # Faqat shu buyurtma egasi (mijoz) va faqat tugallangan buyurtma uchun sharh qoldira oladi
-        if order.client != request.user:
-            return Response(
-                {'error': "Faqat o'z buyurtmangizga sharh qoldira olasiz"},
-                status=status.HTTP_403_FORBIDDEN,
-            )
         if order.builder != worker:
             return Response(
                 {'error': "Bu buyurtma shu quruvchiga tegishli emas"},
@@ -161,17 +147,15 @@ class ReviewListCreateView(APIView):
                 {'error': "Faqat tugallangan buyurtma uchun sharh qoldirish mumkin"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if hasattr(order, 'review'):
+        review, created = WorkerReview.objects.get_or_create(
+            order=order,
+            defaults={'worker': worker, 'client': request.user,
+                      'rating': data['rating'], 'comment': data['comment']},
+        )
+        if not created:
             return Response(
                 {'error': "Bu buyurtmaga sharh allaqachon qoldirilgan"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        review = WorkerReview.objects.create(
-            order=order,
-            worker=worker,
-            client=request.user,
-            rating=rating,
-            comment=comment,
-        )
         return Response(ReviewSerializer(review).data, status=status.HTTP_201_CREATED)

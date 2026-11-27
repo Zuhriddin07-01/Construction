@@ -21,6 +21,8 @@ class ProductCommentSerializer(serializers.ModelSerializer):
  
  
 class ProductRatingSerializer(serializers.ModelSerializer):
+    rating = serializers.IntegerField(min_value=1, max_value=5)
+
     class Meta:
         model = ProductRating
         fields = ['id', 'rating']
@@ -41,7 +43,7 @@ class ProductSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['builder', 'created_at']
  
-    def get_avg_rating(self, obj):
+    def get_avg_rating(self, obj) -> float:
         ratings = obj.ratings.all()
         if not ratings:
             return 0

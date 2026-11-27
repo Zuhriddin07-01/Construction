@@ -1,4 +1,8 @@
-from rest_framework import generics, permissions, status
+from django.contrib.auth import logout, update_session_auth_hash
+from django.db import transaction
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import generics, permissions, serializers, status
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.contrib.auth import get_user_model, authenticate
@@ -8,9 +12,19 @@ from .serializers import (
     LoginSerializer,
     UserProfileSerializer,
     ChangePasswordSerializer,
+    AvatarSerializer,
 )
  
 User = get_user_model()
+
+AuthUser = inline_serializer('AuthUser', fields={
+    'id': serializers.IntegerField(), 'username': serializers.CharField(),
+    'full_name': serializers.CharField(), 'role': serializers.CharField(),
+})
+AuthResponse = inline_serializer('AuthResponse', fields={
+    'message': serializers.CharField(), 'token': serializers.CharField(), 'user': AuthUser,
+})
+MessageResponse = inline_serializer('MessageResponse', fields={'message': serializers.CharField()})
  
  
 class RegisterView(APIView):
@@ -20,6 +34,8 @@ class RegisterView(APIView):
     """
     permission_classes = [permissions.AllowAny]
     serializer_class = RegisterSerializer
+    @extend_schema(responses={201: AuthResponse})
+    @transaction.atomic
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
         if serializer.is_valid():
@@ -46,6 +62,7 @@ class LoginView(APIView):
     permission_classes = [permissions.AllowAny]
     serializer_class = LoginSerializer
  
+    @extend_schema(responses=AuthResponse)
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         if serializer.is_valid():
@@ -80,8 +97,10 @@ class LogoutView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = UserProfileSerializer
  
+    @extend_schema(request=None, responses=MessageResponse)
     def post(self, request):
-        request.user.auth_token.delete()
+        Token.objects.filter(user=request.user).delete()
+        logout(request)
         return Response({'message': 'Tizimdan chiqdingiz!'})
  
  
@@ -97,14 +116,14 @@ class ProfileView(APIView):
         serializer = UserProfileSerializer(request.user)
         return Response(serializer.data)
  
+    @extend_schema(responses=inline_serializer('ProfileUpdate', fields={
+        'message': serializers.CharField(), 'user': UserProfileSerializer(),
+    }))
     def patch(self, request):
         serializer = UserProfileSerializer(request.user, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
-            return Response({
-                'message': 'Profil yangilandi!',
-                'user': serializer.data
-            })
+            return Response({'message': 'Profil yangilandi!', 'user': serializer.data})
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
  
  
@@ -116,8 +135,10 @@ class ChangePasswordView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = ChangePasswordSerializer
  
+    @extend_schema(responses=MessageResponse)
+    @transaction.atomic
     def post(self, request):
-        serializer = ChangePasswordSerializer(data=request.data)
+        serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
             user = request.user
  
@@ -129,7 +150,9 @@ class ChangePasswordView(APIView):
                 )
  
             user.set_password(serializer.validated_data['new_password'])
-            user.save()
+            user.save(update_fields=['password'])
+            Token.objects.filter(user=user).delete()
+            update_session_auth_hash(request, user)
             return Response({'message': 'Parol muvaffaqiyatli o\'zgartirildi!'})
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
  
@@ -140,15 +163,12 @@ class AvatarUploadView(APIView):
     Profil rasmini yuklash
     """
     permission_classes = [permissions.IsAuthenticated]
-    serializer_class = UserProfileSerializer
- 
+    parser_classes = [MultiPartParser, FormParser]
+    serializer_class = AvatarSerializer
+
+    @extend_schema(responses=MessageResponse)
     def post(self, request):
-        avatar = request.FILES.get('avatar')
-        if not avatar:
-            return Response(
-                {'error': 'Rasm yuklanmadi!'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        request.user.avatar = avatar
-        request.user.save()
+        serializer = AvatarSerializer(request.user, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
         return Response({'message': 'Profil rasmi yangilandi!'})
