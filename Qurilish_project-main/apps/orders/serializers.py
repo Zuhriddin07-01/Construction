@@ -14,3 +14,18 @@ class OrderSerializer(serializers.ModelSerializer):
             'budget', 'status', 'created_at', 'updated_at',
         ]
         read_only_fields = ['client', 'builder', 'status', 'created_at', 'updated_at']
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        viewer_id = self.context.get('viewer_id')
+        if viewer_id is not None and viewer_id not in (instance.client_id, instance.builder_id):
+            data['address'] = ''
+            data['client'] = None
+            data['client_name'] = ''
+        return data
+
+
+class OrderStatusSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=[
+        Order.Status.ACCEPTED, Order.Status.REJECTED, Order.Status.IN_WORK, Order.Status.DONE,
+    ])

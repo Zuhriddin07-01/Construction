@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -22,15 +23,10 @@ load_dotenv(BASE_DIR / '.env')
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-# .env faylda SECRET_KEY belgilanadi. Agar topilmasa, faqat local dev uchun fallback ishlatiladi.
-SECRET_KEY = os.environ.get(
-    'SECRET_KEY',
-    'django-insecure-a*59fymf#@3l=t$)fj5g9utyfimo^3wzh8*9734-#91ozs3yss'
-)
-
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get('DEBUG', 'True') == 'True'
+DEBUG = os.environ.get('DEBUG', 'False').lower() in {'1', 'true', 'yes'}
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY')
+if not SECRET_KEY:
+    raise ImproperlyConfigured('Set DJANGO_SECRET_KEY in your environment or .env file.')
 
 ALLOWED_HOSTS = [
     h.strip() for h in os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if h.strip()
@@ -65,7 +61,7 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 # Login URL
 LOGIN_URL = '/admin/login/'
-LOGIN_REDIRECT_URL = '/dashboard/'
+LOGIN_REDIRECT_URL = '/admin/'
 
 
 MIDDLEWARE = [
@@ -82,7 +78,7 @@ MIDDLEWARE = [
 # CORS sozlamalari
 # Production'da CORS_ALLOW_ALL_ORIGINS=True xavfli, shuning uchun DEBUG rejimida
 # hammasiga ruxsat beramiz, aks holda faqat aniq domenlarga.
-CORS_ALLOW_ALL_ORIGINS = DEBUG
+CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = [
     o.strip() for o in os.environ.get('CORS_ALLOWED_ORIGINS', '').split(',') if o.strip()
 ]
@@ -102,6 +98,12 @@ REST_FRAMEWORK = {
     ],
 }
 
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Construction Services API',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+}
 
 ROOT_URLCONF = 'proyect.urls'
 AUTH_USER_MODEL = 'users.User'
